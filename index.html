@@ -2,11 +2,11 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Kar98k 3D Shooter</title>
+  <title>Kar98k 3D Shooter with Map</title>
   <style>
     body {
       margin: 0; overflow: hidden;
-      background: #222;
+      background: #87ceeb;
       color: #eee;
       font-family: Arial, sans-serif;
     }
@@ -93,9 +93,10 @@
     function init() {
       // Scene and camera
       scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x333333);
+      scene.background = new THREE.Color(0x87ceeb); // light sky blue
 
       camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+      camera.position.set(0, 1.6, 5); // Raise camera to 1.6m height and a bit back
 
       // Renderer
       renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -147,7 +148,7 @@
 
       // Load Kar98k + arms model (publicly hosted)
       const loader = new GLTFLoader();
-      // Model source: I've uploaded a Kar98k + arms viewmodel here (public CDN)
+      // Model source: hosted publicly on GitHub CDN
       const modelUrl = 'https://raw.githubusercontent.com/ChatGPT-UserAssets/kar98k-viewmodel/main/kar98k_arms.glb';
 
       loader.load(modelUrl, (gltf) => {
@@ -171,22 +172,22 @@
       scene.add(ambient);
 
       const directional = new THREE.DirectionalLight(0xffffff, 0.8);
-      directional.position.set(1, 1, 1);
+      directional.position.set(5, 10, 7);
       scene.add(directional);
 
-      // Ground
-      const groundMat = new THREE.MeshStandardMaterial({ color: 0x556655 });
-      const groundGeo = new THREE.PlaneGeometry(100, 100);
+      // Ground (green plane)
+      const groundMat = new THREE.MeshStandardMaterial({ color: 0x228B22 }); // forest green
+      const groundGeo = new THREE.PlaneGeometry(50, 50);
       const ground = new THREE.Mesh(groundGeo, groundMat);
       ground.rotation.x = -Math.PI / 2;
-      ground.position.y = -1.5;
+      ground.position.y = 0;
       scene.add(ground);
 
       // Target - red cube
       const targetMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
       const targetGeo = new THREE.BoxGeometry(1, 1, 1);
       target = new THREE.Mesh(targetGeo, targetMat);
-      target.position.set(0, 0.5, -15);
+      target.position.set(0, 0.5, -10);
       scene.add(target);
 
       // Shoot on left mouse click
@@ -202,7 +203,7 @@
 
       window.addEventListener('contextmenu', (e) => e.preventDefault()); // disable context menu on right click
 
-      // Update movement in animation
+      // Movement update
       function movePlayer(delta) {
         if (!controls.isLocked) return;
         const speed = 5 * delta;
@@ -211,7 +212,7 @@
         if (move.left) controls.moveRight(-speed);
         if (move.right) controls.moveRight(speed);
       }
-      window.movePlayer = movePlayer; // expose globally for animation loop
+      window.movePlayer = movePlayer; // expose globally
     }
 
     function animate() {
@@ -226,9 +227,9 @@
       renderer.render(scene, camera);
     }
 
-    // ADS (Aim Down Sights) variables
-    let adsProgress = 0; // 0 = no aim, 1 = fully aimed
-    const adsSpeed = 5; // how fast to transition
+    // ADS (Aim Down Sights)
+    let adsProgress = 0;
+    const adsSpeed = 5;
 
     function setADS(active) {
       isAiming = active;
@@ -240,43 +241,34 @@
       adsProgress += (isAiming ? 1 : -1) * adsSpeed * delta;
       adsProgress = Math.min(Math.max(adsProgress, 0), 1);
 
-      // Smoothly move gun position & zoom camera
-      // Gun moves closer to center & slightly forward
       const startPos = new THREE.Vector3(0.4, -0.7, -1);
       const aimPos = new THREE.Vector3(0, -0.4, -0.5);
 
       const currentPos = startPos.clone().lerp(aimPos, adsProgress);
       gun.position.copy(currentPos);
 
-      // Camera FOV zoom
       const startFOV = 75;
       const aimFOV = 45;
       camera.fov = THREE.MathUtils.lerp(startFOV, aimFOV, adsProgress);
       camera.updateProjectionMatrix();
     }
 
-    // Shooting function
+    // Shooting
     function shoot() {
-      if (ammo <= 0) {
-        // No ammo sound or feedback could be added here
-        return;
-      }
+      if (ammo <= 0) return;
       ammo--;
       updateAmmoDisplay();
 
-      // Show muzzle flash briefly at the gun's barrel position
       if (gun) {
         const barrelWorldPos = new THREE.Vector3();
         gun.getWorldPosition(barrelWorldPos);
         muzzleFlash.position.copy(barrelWorldPos);
         muzzleFlash.visible = true;
-        muzzleFlash.life = 0.1; // seconds
+        muzzleFlash.life = 0.1;
       }
 
-      // Play gunshot sound
       playGunshotSound();
 
-      // Raycast to detect target hit
       raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
       const intersects = raycaster.intersectObject(target);
       if (intersects.length > 0) {
@@ -286,16 +278,12 @@
       }
     }
 
-    // Muzzle flash timing
     function updateMuzzleFlash(delta) {
       if (!muzzleFlash.visible) return;
       muzzleFlash.life -= delta;
-      if (muzzleFlash.life <= 0) {
-        muzzleFlash.visible = false;
-      }
+      if (muzzleFlash.life <= 0) muzzleFlash.visible = false;
     }
 
-    // Reload function
     function reload() {
       if (isReloading) return;
       isReloading = true;
@@ -311,7 +299,6 @@
       ammoDisplay.textContent = `Ammo: ${ammo} / ${maxAmmo}`;
     }
 
-    // Hitmarker effect
     function hitMarker() {
       crosshair.style.borderColor = 'yellow';
       setTimeout(() => {
@@ -320,7 +307,6 @@
       }, 150);
     }
 
-    // Gunshot sound (basic)
     function playGunshotSound() {
       const ctx = new AudioContext();
       const o = ctx.createOscillator();
@@ -334,7 +320,6 @@
       o.stop(ctx.currentTime + 0.05);
     }
 
-    // Handle window resize
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth/window.innerHeight;
       camera.updateProjectionMatrix();
