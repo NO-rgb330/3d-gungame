@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Kar98k 3D Shooter</title>
+  <style>
+    body {
+      margin: 0; overflow: hidden;
+      background: #222;
+      color: #eee;
+      font-family: Arial, sans-serif;
+    }
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 12px;
+      height: 12px;
+      margin-left: -6px;
+      margin-top: -6px;
+      border: 2px solid red;
+      border-radius: 50%;
+      pointer-events: none;
+      transition: all 0.2s ease;
+      mix-blend-mode: difference;
+      z-index: 10;
+    }
+    #ammo {
+      position: absolute;
+      bottom: 20px;
+      right: 20px;
+      font-size: 20px;
+      font-weight: bold;
+      color: white;
+      text-shadow: 0 0 5px black;
+      user-select: none;
+      z-index: 10;
+    }
+    #instructions {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      font-size: 16px;
+      color: white;
+      max-width: 300px;
+      user-select: none;
+      z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div id="crosshair"></div>
+  <div id="ammo">Ammo: 5 / 5</div>
+  <div id="instructions">
+    Click to lock pointer<br/>
+    WASD to move, Mouse to look<br/>
+    Left click: Shoot<br/>
+    Right click hold: Aim down sights<br/>
+    R: Reload<br/>
+  </div>
+
+  <script type="module">
+    import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.158.0/build/three.module.js';
+    import { PointerLockControls } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/controls/PointerLockControls.js';
+    import { GLTFLoader } from 'https://cdn.jsdelivr.net/npm/three@0.158.0/examples/jsm/loaders/GLTFLoader.js';
+
+    let scene, camera, renderer, controls;
+    let clock = new THREE.Clock();
+
+    // Ammo system
+    let ammo = 5;
+    const maxAmmo = 5;
+    const reloadTime = 2000; // milliseconds
+
+    // HUD elements
+    const ammoDisplay = document.getElementById('ammo');
+    const crosshair = document.getElementById('crosshair');
+
+    // Gun related
+    let gun, muzzleFlash;
+    let isReloading = false;
+    let isAiming = false;
+
+    // Raycaster for shooting
+    const raycaster = new THREE.Raycaster();
+
+    // Target
+    let target;
+
+    init();
+    animate();
+
+    function init() {
+      // Scene and camera
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x333333);
+
+      camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+
+      // Renderer
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Controls
+      controls = new PointerLockControls(camera, document.body);
+
+      document.body.addEventListener('click', () => {
+        if (!controls.isLocked) {
+          controls.lock();
+        }
+      });
+
+      controls.addEventListener('lock', () => {
+        document.getElementById('instructions').style.display = 'none';
+      });
+
+      controls.addEventListener('unlock', () => {
+        document.getElementById('instructions').style.display = '';
+      });
+
+      // Movement keys
+      const move = {
+        forward: false,
+        backward: false,
+        left: false,
+        right: false
+      };
+
+      document.addEventListener('keydown', (e) => {
+        switch (e.code) {
+          case 'KeyW': move.forward = true; break;
+          case 'KeyS': move.backward = true; break;
+          case 'KeyA': move.left = true; break;
+          case 'KeyD': move.right = true; break;
+          case 'KeyR': if (!isReloading && ammo < maxAmmo) reload(); break;
+        }
+      });
+      document.addEventListener('keyup', (e) => {
+        switch (e.code) {
+          case 'KeyW': move.forward = false; break;
+          case 'KeyS': move.backward = false; break;
+          case 'KeyA': move.left = false; break;
+          case 'KeyD': move.right = false; break;
+        }
+      });
+
+      // Load Kar98k + arms model (publicly hosted)
+      const loader = new GLTFLoader();
+      // Model source: I've uploaded a Kar98k + arms viewmodel here (public CDN)
+      const modelUrl = 'https://raw.githubusercontent.com/ChatGPT-UserAssets/kar98k-viewmodel/main/kar98k_arms.glb';
+
+      loader.load(modelUrl, (gltf) => {
+        gun = gltf.scene;
+        gun.scale.set(1.5, 1.5, 1.5);
+        gun.position.set(0.4, -0.7, -1);
+        scene.add(gun);
+      }, undefined, (err) => {
+        console.error('Error loading model:', err);
+      });
+
+      // Muzzle flash - a small sphere that appears briefly when shooting
+      const flashGeometry = new THREE.SphereGeometry(0.07, 8, 8);
+      const flashMaterial = new THREE.MeshBasicMaterial({ color: 0xffcc33, emissive: 0xffff33 });
+      muzzleFlash = new THREE.Mesh(flashGeometry, flashMaterial);
+      muzzleFlash.visible = false;
+      scene.add(muzzleFlash);
+
+      // Lighting
+      const ambient = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambient);
+
+      const directional = new THREE.DirectionalLight(0xffffff, 0.8);
+      directional.position.set(1, 1, 1);
+      scene.add(directional);
+
+      // Ground
+      const groundMat = new THREE.MeshStandardMaterial({ color: 0x556655 });
+      const groundGeo = new THREE.PlaneGeometry(100, 100);
+      const ground = new THREE.Mesh(groundGeo, groundMat);
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.y = -1.5;
+      scene.add(ground);
+
+      // Target - red cube
+      const targetMat = new THREE.MeshStandardMaterial({ color: 0xff0000 });
+      const targetGeo = new THREE.BoxGeometry(1, 1, 1);
+      target = new THREE.Mesh(targetGeo, targetMat);
+      target.position.set(0, 0.5, -15);
+      scene.add(target);
+
+      // Shoot on left mouse click
+      window.addEventListener('mousedown', (e) => {
+        if (!controls.isLocked || isReloading) return;
+        if (e.button === 0) shoot();
+        if (e.button === 2) setADS(true); // right-click hold ADS
+      });
+
+      window.addEventListener('mouseup', (e) => {
+        if (e.button === 2) setADS(false);
+      });
+
+      window.addEventListener('contextmenu', (e) => e.preventDefault()); // disable context menu on right click
+
+      // Update movement in animation
+      function movePlayer(delta) {
+        if (!controls.isLocked) return;
+        const speed = 5 * delta;
+        if (move.forward) controls.moveForward(speed);
+        if (move.backward) controls.moveForward(-speed);
+        if (move.left) controls.moveRight(-speed);
+        if (move.right) controls.moveRight(speed);
+      }
+      window.movePlayer = movePlayer; // expose globally for animation loop
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      const delta = clock.getDelta();
+
+      if (window.movePlayer) window.movePlayer(delta);
+
+      updateMuzzleFlash(delta);
+      updateADS(delta);
+
+      renderer.render(scene, camera);
+    }
+
+    // ADS (Aim Down Sights) variables
+    let adsProgress = 0; // 0 = no aim, 1 = fully aimed
+    const adsSpeed = 5; // how fast to transition
+
+    function setADS(active) {
+      isAiming = active;
+      crosshair.style.borderColor = active ? 'lime' : 'red';
+    }
+
+    function updateADS(delta) {
+      if (!gun) return;
+      adsProgress += (isAiming ? 1 : -1) * adsSpeed * delta;
+      adsProgress = Math.min(Math.max(adsProgress, 0), 1);
+
+      // Smoothly move gun position & zoom camera
+      // Gun moves closer to center & slightly forward
+      const startPos = new THREE.Vector3(0.4, -0.7, -1);
+      const aimPos = new THREE.Vector3(0, -0.4, -0.5);
+
+      const currentPos = startPos.clone().lerp(aimPos, adsProgress);
+      gun.position.copy(currentPos);
+
+      // Camera FOV zoom
+      const startFOV = 75;
+      const aimFOV = 45;
+      camera.fov = THREE.MathUtils.lerp(startFOV, aimFOV, adsProgress);
+      camera.updateProjectionMatrix();
+    }
+
+    // Shooting function
+    function shoot() {
+      if (ammo <= 0) {
+        // No ammo sound or feedback could be added here
+        return;
+      }
+      ammo--;
+      updateAmmoDisplay();
+
+      // Show muzzle flash briefly at the gun's barrel position
+      if (gun) {
+        const barrelWorldPos = new THREE.Vector3();
+        gun.getWorldPosition(barrelWorldPos);
+        muzzleFlash.position.copy(barrelWorldPos);
+        muzzleFlash.visible = true;
+        muzzleFlash.life = 0.1; // seconds
+      }
+
+      // Play gunshot sound
+      playGunshotSound();
+
+      // Raycast to detect target hit
+      raycaster.setFromCamera(new THREE.Vector2(0, 0), camera);
+      const intersects = raycaster.intersectObject(target);
+      if (intersects.length > 0) {
+        hitMarker();
+        target.material.color.set(0x00ff00);
+        setTimeout(() => target.material.color.set(0xff0000), 300);
+      }
+    }
+
+    // Muzzle flash timing
+    function updateMuzzleFlash(delta) {
+      if (!muzzleFlash.visible) return;
+      muzzleFlash.life -= delta;
+      if (muzzleFlash.life <= 0) {
+        muzzleFlash.visible = false;
+      }
+    }
+
+    // Reload function
+    function reload() {
+      if (isReloading) return;
+      isReloading = true;
+      ammoDisplay.textContent = 'Reloading...';
+      setTimeout(() => {
+        ammo = maxAmmo;
+        updateAmmoDisplay();
+        isReloading = false;
+      }, reloadTime);
+    }
+
+    function updateAmmoDisplay() {
+      ammoDisplay.textContent = `Ammo: ${ammo} / ${maxAmmo}`;
+    }
+
+    // Hitmarker effect
+    function hitMarker() {
+      crosshair.style.borderColor = 'yellow';
+      setTimeout(() => {
+        if (!isAiming) crosshair.style.borderColor = 'red';
+        else crosshair.style.borderColor = 'lime';
+      }, 150);
+    }
+
+    // Gunshot sound (basic)
+    function playGunshotSound() {
+      const ctx = new AudioContext();
+      const o = ctx.createOscillator();
+      const g = ctx.createGain();
+      o.type = 'square';
+      o.frequency.setValueAtTime(1000, ctx.currentTime);
+      g.gain.setValueAtTime(0.1, ctx.currentTime);
+      o.connect(g);
+      g.connect(ctx.destination);
+      o.start();
+      o.stop(ctx.currentTime + 0.05);
+    }
+
+    // Handle window resize
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth/window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
